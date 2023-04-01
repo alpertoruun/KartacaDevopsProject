@@ -1,0 +1,128 @@
+version: '3.2'
+services:
+  mongo1:
+    image: mongo
+    command: --replSet staj
+    networks:
+      - mongodb
+    ports:
+    - "27017:27017"
+
+  mongo2:
+      image: mongo
+      command: --replSet staj
+      networks:
+        - mongodb
+      ports:
+      - "27018:27017"
+
+  mongo3:
+      image: mongo
+      command: --replSet staj
+      networks:
+      - mongodb
+      ports:
+      - "27019:27017"
+
+  app:
+      image: mongo
+      entrypoint: bash -c "chmod +x mongo-init.sh && /mongo-init.sh"
+      volumes:
+      - /mongo-init.sh:/mongo-init.sh
+      networks:
+      - mongodb
+      depends_on:
+      - mongo1
+      - mongo2
+      - mongo3
+
+  traefik:
+    image: "traefik:v2.5"
+    command:
+      - "configFile=/traefik.yml"
+    ports:
+      - "80:80"
+    volumes:
+      - "./traefik.yml:/traefik.yml"
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+    networks:
+      - mongodb
+
+  myapp:
+    build: .
+    expose:
+      - 4444
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.myapp.rule=Host(kartaca.localhost) && PathPrefix(/pythonapp)"
+      - "traefik.http.routers.myapp.entrypoints=web"
+      - "traefik.http.middlewares.strip_prefix.stripprefix.prefixes=/pythonapp"
+      - "traefik.http.routers.myapp.middlewares=strip_prefix"
+    networks:
+      - mongodb
+
+  goapp:
+    build: ./GoDocker
+    expose:
+      - 5555
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.goapp.rule=Host(kartaca.localhost) && PathPrefix(/goapp)"
+      - "traefik.http.routers.goapp.entrypoints=web"
+      - "traefik.http.middlewares.strip_prefix2.stripprefix.prefixes=/goapp"
+      - "traefik.http.routers.goapp.middlewares=strip_prefix2"
+    networks:
+      - mongodb
+      
+  grafana:
+    image: grafana/grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./grafana_provisioning:/etc/grafana/provisioning
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.grafana.rule=Host(kartaca.localhost) && PathPrefix(/grafana)"
+      - "traefik.http.routers.grafana.entrypoints=web"
+      - "traefik.http.middlewares.strip_prefix3.stripprefix.prefixes=/grafana"
+      - "traefik.http.routers.grafana.middlewares=strip_prefix3"
+
+  prometheus:
+    image: prom/prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    depends_on:
+      - cadvisor
+      - nodeexporter
+
+  cadvisor:
+    image: gcr.io/google-containers/cadvisor:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:rw
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+
+  nodeexporter:
+    image: prom/node-exporter
+    ports:
+      - "9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - 'path.procfs=/host/proc'
+      - 'path.sysfs=/host/sys'
+      - 'collector.filesystem.ignored-mount-points="^/(sys|proc|dev|host|etc)($$|/)"'
+
+networks:
+  mongodb:
